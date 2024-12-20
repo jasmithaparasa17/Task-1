@@ -1,0 +1,85 @@
+# Install required libraries
+!pip install requests beautifulsoup4 langchain sentence-transformers faiss-cpu openai
+!pip install -U langchain-community
+# Import necessary libraries
+import os
+import requests
+from bs4 import BeautifulSoup
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.llms import OpenAI
+from langchain.chains import RetrievalQA
+
+# Step 1: Web Scraping
+def scrape_website(url):
+    response = requests.get(url)
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.text, 'html.parser')
+        # Extract text content from the website
+        return ' '.join([p.text for p in soup.find_all('p')])
+    else:
+        print(f"Failed to retrieve the URL: {url}")
+        return ""
+
+# Step 2: Chunk the Text
+def chunk_text(text, chunk_size=500, overlap=50):
+    chunks = []
+    for i in range(0, len(text), chunk_size - overlap):
+        chunks.append(text[i:i + chunk_size])
+    return chunks
+
+# Step 3: Generate Embeddings
+def create_embeddings(chunks, model_name='all-MiniLM-L6-v2'):
+    embeddings = HuggingFaceEmbeddings(model_name=model_name)
+    return embeddings, chunks
+
+# Step 4: Store Embeddings in Vector Database
+def create_vector_database(embeddings, chunks):
+    return FAISS.from_texts(chunks, embeddings)
+
+"""# Step 5: Handle Queries
+def handle_query(query, retriever, llm):
+    qa = RetrievalQA.from_chain_type(llm=llm, retriever=retriever)
+    return qa.run(query)"""
+from transformers import pipeline
+
+#Handle Queries Using QA Pipeline
+qa_pipeline = pipeline("question-answering", model="distilbert-base-cased-distilled-squad")
+
+def handle_query(query, retriever): 
+    docs = retriever.get_relevant_documents(query)
+    context = " ".join([doc.page_content for doc in docs])
+    answer = qa_pipeline(question=query, context=context)
+    return answer["answer"]
+
+# Main Code
+if __name__ == "__main__":
+    # Example websites to scrape
+    websites = [
+        "https://www.uchicago.edu/",
+        "https://www.washington.edu/",
+        "https://www.stanford.edu/",
+        "https://und.edu/"
+    ]
+
+    # Scrape content from websites
+    all_text = ""
+    for url in websites:
+        print(f"Scraping website: {url}")
+        all_text += scrape_website(url)
+
+    # Chunk the text
+    chunks = chunk_text(all_text)
+
+    # Generate embeddings and create a vector database
+    embeddings, processed_chunks = create_embeddings(chunks)
+    vector_db = create_vector_database(embeddings, processed_chunks)
+
+    # Create the LLM and connect it with the retriever
+    llm = OpenAI(api_key="your_openai_api_key")  # Replace with your API key
+    retriever = vector_db.as_retriever()
+
+    # Example Query
+    query = "What academic programs are offered at Stanford University?"
+    response = handle_query(query, retriever)
+    print("Response:", response)
